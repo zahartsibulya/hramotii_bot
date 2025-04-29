@@ -32,7 +32,7 @@ def webhook():
         response_text = "На жаль, я ще не знаю точної відповіді, але вже вчуся!"
         with open("log.txt", "a", encoding="utf-8") as log_file:
             log_file.write(f"[{datetime.datetime.now()}] {user_query}\n")
-            print(f"Unknown question: {user_message}")
+            print(f"Unknown question: {response_text}")
     
     return jsonify({
         "fulfillmentText": response_text
