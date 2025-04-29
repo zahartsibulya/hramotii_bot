@@ -1,42 +1,49 @@
 from flask import Flask, request, jsonify
-import datetime
+import requests
+import os
 
 app = Flask(__name__)
 
-# Простий словник відповідей
-knowledge_base = {
-    "пів'яблука": "Правильно: пів'яблука — через апостроф, бо наступне слово починається з я, ю, є, ї.",
-    "пів яблука": "Правильно: пів'яблука — через апостроф, бо наступне слово починається з я, ю, є, ї.",
-    "півострів": "Правильно: півострів — разом, без апострофа, бо після 'пів' стоїть приголосний.",
-    "одинадцять": "Правильний наголос: одинадцЯть.",
-    "кроїти": "Правильний наголос: кроїтИ.",
-    "кома перед що": "Кома перед 'що' ставиться, якщо це підрядне речення.",
-    "кома перед бо": "Кома перед 'бо' потрібна, бо це складнопідрядне речення.",
-    "дієприслівник": "Дієприслівник — це незмінювана форма дієслова, що означає додаткову дію: працюючи, читаючи."
-}
+# 🔐 GPT (опційно)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-def search_answer(query):
-    lower_query = query.lower()
-    for key in knowledge_base:
-        if key in lower_query:
-            return knowledge_base[key]
+def search_wikipedia(query):
+    url = f"https://uk.wikipedia.org/api/rest_v1/page/summary/{query.replace(' ', '_')}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("extract")
     return None
 
-@app.route('/webhook', methods=['POST'])
+def ask_gpt(prompt):
+    if not OPENAI_API_KEY:
+        return None
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    return None
+
+@app.route("/webhook", methods=["POST"])
 def webhook():
     req = request.get_json()
-    user_query = req.get('queryResult', {}).get('queryText', '')
-    
-    response_text = search_answer(user_query)
-    if not response_text:
-        response_text = "На жаль, я ще не знаю точної відповіді, але вже вчуся!"
-        with open("log.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(f"[{datetime.datetime.now()}] {user_query}\n")
-            print(f"Unknown question: {user_query}")
-    
-    return jsonify({
-        "fulfillmentText": response_text
-    })
+    user_query = req["queryResult"]["queryText"]
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    # 1. Спроба знайти у Wikipedia
+    wiki_result = search_wikipedia(user_query)
+
+    # 2. Якщо GPT увімкнено, уточнити/переформулювати
+    if wiki_result and OPENAI_API_KEY:
+        refined_answer = ask_gpt(f"Сформулюй коротку й зрозумілу відповідь на українською: {wiki_result}")
+        result = refined_answer or wiki_result
+    else:
+        result = wiki_result or "На жаль, я не знайшов точної відповіді."
+
+    return jsonify({"fulfillmentText": result})
